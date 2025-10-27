@@ -1,0 +1,81 @@
+import { GoogleGenAI, Modality, Part } from "@google/genai";
+
+const API_KEY = process.env.API_KEY;
+if (!API_KEY) {
+  throw new Error("API_KEY environment variable is not set.");
+}
+
+const ai = new GoogleGenAI({ apiKey: API_KEY });
+
+// Function to convert a File object to a GoogleGenerativeAI.Part
+async function fileToGenerativePart(file: File): Promise<Part> {
+  const base64EncodedDataPromise = new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        // The result includes the data URL prefix (e.g., "data:image/png;base64,"), 
+        // which should be removed.
+        resolve(reader.result.split(',')[1]);
+      } else {
+        // Fallback for ArrayBuffer or other types, though less common for this use case
+        resolve('');
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+
+  return {
+    inlineData: {
+      data: await base64EncodedDataPromise,
+      mimeType: file.type,
+    },
+  };
+}
+
+export const generateProductImage = async (
+  productImage: File,
+  prompt: string,
+  swapImage: File | null
+): Promise<[string, string]> => {
+  const model = 'gemini-2.5-flash-image';
+  
+  const productImagePart = await fileToGenerativePart(productImage);
+  const textPart = { text: prompt };
+
+  const parts: Part[] = [productImagePart];
+
+  if (swapImage) {
+    const swapImagePart = await fileToGenerativePart(swapImage);
+    parts.push(swapImagePart);
+  }
+  
+  parts.push(textPart);
+
+  const generate = async () => {
+      const response = await ai.models.generateContent({
+        model,
+        contents: {
+          parts: parts,
+        },
+        config: {
+          responseModalities: [Modality.IMAGE],
+          seed: Math.floor(Math.random() * 1000000),
+        },
+      });
+
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+          return part.inlineData.data;
+        }
+      }
+      throw new Error("No image was generated in one of the API calls.");
+  };
+
+  const [imageData1, imageData2] = await Promise.all([generate(), generate()]);
+
+  if (!imageData1 || !imageData2) {
+    throw new Error("Failed to generate one or both images.");
+  }
+  
+  return [imageData1, imageData2];
+};
